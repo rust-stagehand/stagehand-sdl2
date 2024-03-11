@@ -27,8 +27,8 @@ pub mod loading;
 pub struct SDLApp<'a> {
     stage: Stage<
         'a,
-        Initialize<SDLCommand, SDLStorage<'a>>,
-        Update<SDLCommand>,
+        Initialize<SDLCommand, SDLStorage<'a>, ()>,
+        Update<SDLCommand, ()>,
         Vec<UpdateAction>,
         (),
         DrawBatch<Draw, ()>,
@@ -37,7 +37,7 @@ pub struct SDLApp<'a> {
     sdl: Sdl,
     canvas: Canvas<Window>,
 
-    update: Update<SDLCommand>,
+    update: Update<SDLCommand, ()>,
 
     storage: SDLStorage<'a>,
 
@@ -62,6 +62,7 @@ impl<'a> SDLApp<'a> {
             update: Update {
                 input,
                 info: Vec::new(),
+                content: (),
             },
 
             storage,
@@ -74,8 +75,8 @@ impl<'a> SDLApp<'a> {
         &mut self,
         scene: Box<
             dyn Scene<
-                    Initialize = Initialize<SDLCommand, SDLStorage<'a>>,
-                    Update = Update<SDLCommand>,
+                    Initialize = Initialize<SDLCommand, SDLStorage<'a>, ()>,
+                    Update = Update<SDLCommand, ()>,
                     Draw = (),
                     UpdateBatch = Vec<UpdateAction>,
                     DrawBatch = DrawBatch<Draw, ()>,
@@ -191,18 +192,35 @@ impl<'a> App for SDLApp<'a> {
         }
 
         let keys = events.keyboard_state();
+        let mouse = events.mouse_state();
 
         for command_options in self.update.input.commands.iter() {
             let mut active = ActionType::Digital(ActionState::Up);
             'commands: for command in command_options.commands.iter() {
                 match command {
-                    SDLCommand::Key(c) => {
+                    SDLCommand::Key(c) => 'key: {
                         for key in c.iter() {
-                            if keys.is_scancode_pressed(*key) {
-                                active = ActionType::Digital(ActionState::Down);
-                                break 'commands;
+                            if !keys.is_scancode_pressed(*key) {
+                                break 'key;
                             }
                         }
+                        active = ActionType::Digital(ActionState::Down);
+                        break 'commands;
+                    }
+                    SDLCommand::MouseButton(b) => 'button: {
+                        for button in b.iter() {
+                            if !mouse.is_mouse_button_pressed(*button) {
+                                break 'button;
+                            }
+                        }
+                        active = ActionType::Digital(ActionState::Down);
+                        break 'commands;
+                    }
+                    SDLCommand::MousePosition => {
+                        active = ActionType::Analog {
+                            x: mouse.x() as f32,
+                            y: mouse.y() as f32,
+                        };
                     }
                     _ => {}
                 };
@@ -242,7 +260,6 @@ impl<'a> App for SDLApp<'a> {
                             UpdateAction::PlaySound(ticket, volume) => {
                                 self.play_sound(*ticket, *volume)
                             }
-                            _ => {}
                         }
                     }
                 }

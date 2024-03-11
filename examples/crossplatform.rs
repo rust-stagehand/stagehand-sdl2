@@ -1,6 +1,7 @@
 use sdl2::{
     keyboard::Scancode,
     mixer::{InitFlag, AUDIO_S16LSB, DEFAULT_CHANNELS},
+    mouse::MouseButton,
 };
 
 use stagehand::{
@@ -45,7 +46,8 @@ fn main() -> Result<(), String> {
             "Forward".to_string(),
             vec![
                 SDLCommand::Key(vec![Scancode::W]),
-                SDLCommand::Key(vec![Scancode::Up]),
+                SDLCommand::Key(vec![Scancode::Up, Scancode::LShift]),
+                SDLCommand::MouseButton(vec![MouseButton::Left]),
             ],
             ActionType::Digital(ActionState::Up),
         )
@@ -56,7 +58,8 @@ fn main() -> Result<(), String> {
             "Backward".to_string(),
             vec![
                 SDLCommand::Key(vec![Scancode::S]),
-                SDLCommand::Key(vec![Scancode::Down]),
+                SDLCommand::Key(vec![Scancode::Down, Scancode::LShift]),
+                SDLCommand::MouseButton(vec![MouseButton::Right]),
             ],
             ActionType::Digital(ActionState::Up),
         )
@@ -65,7 +68,7 @@ fn main() -> Result<(), String> {
         .add_action(
             player,
             "Look".to_string(),
-            vec![],
+            vec![SDLCommand::MousePosition],
             ActionType::Analog { x: 0.0, y: 0.0 },
         )
         .unwrap();
@@ -99,12 +102,12 @@ fn main() -> Result<(), String> {
     storage.music.lock();
     storage.sounds.lock();
 
-    let mut initialize = Initialize::<SDLCommand, SDLStorage>::new(input, storage);
+    let mut initialize = Initialize::<SDLCommand, SDLStorage, ()>::new(input, storage, ());
 
     let mut scene = ExampleScene::new();
     scene.initialize(&mut initialize);
 
-    let mut app = SDLApp::new(sdl_context, canvas, initialize.input, initialize.content)?;
+    let mut app = SDLApp::new(sdl_context, canvas, initialize.input, initialize.storage)?;
 
     app.add_scene(Box::new(scene));
 
