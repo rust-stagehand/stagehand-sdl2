@@ -90,8 +90,14 @@ fn main() -> Result<(), String> {
         .load("Music.wav".to_string(), "example-assets/Music.wav")
         .unwrap();
 
+    storage
+        .sounds
+        .load("OoB.wav".to_string(), "example-assets/OoB.wav")
+        .unwrap();
+
     storage.textures.lock();
     storage.music.lock();
+    storage.sounds.lock();
 
     let mut initialize = Initialize::<SDLCommand, SDLStorage>::new(input, storage);
 

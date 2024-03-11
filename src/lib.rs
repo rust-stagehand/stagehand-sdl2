@@ -7,7 +7,7 @@ use sdl2::{
     video::Window,
     Sdl, TimerSubsystem,
 };
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use stagehand::{
     app::App,
@@ -85,11 +85,15 @@ impl<'a> SDLApp<'a> {
         self.stage.push_scene(scene);
     }
 
+    fn volume(v: f32) -> i32 {
+        (v * sdl2::mixer::MAX_VOLUME as f32) as i32
+    }
+
     fn play_music(&mut self, ticket: Ticket, loops: i32, volume: f32) {
         match self.storage.music.get_by_ticket(ticket) {
             Ok(m) => {
-                sdl2::mixer::Music::set_volume((volume * sdl2::mixer::MAX_VOLUME as f32) as i32);
-                match m.play(loops) {
+                sdl2::mixer::Music::set_volume(SDLApp::volume(volume));
+                match m.borrow().play(loops) {
                     Ok(()) => {}
                     Err(e) => error!("Error playing music: {}", e),
                 }
@@ -98,8 +102,31 @@ impl<'a> SDLApp<'a> {
         }
     }
 
-    fn render_texture(&mut self, texture: Rc<Texture<'_>>, data: &DrawData) {
-        let query = texture.query();
+    fn play_sound(&mut self, ticket: Ticket, volume: f32) {
+        match self.storage.sounds.get_by_ticket(ticket) {
+            Ok(s) => {
+                match s.try_borrow_mut() {
+                    Ok(mut s_v) => {
+                        s_v.set_volume(SDLApp::volume(volume));
+                    }
+                    Err(e) => warn!(
+                        "Cannot set volume on a sound effect already borrowed elsewhere: {}",
+                        e
+                    ),
+                }
+
+                match sdl2::mixer::Channel::all().play(&s.borrow(), 0) {
+                    Ok(_c) => {}
+                    Err(e) => error!("Error playing sound: {}", e),
+                }
+            }
+            Err(e) => ResourceError::log_failure(e),
+        }
+    }
+
+    fn render_texture(&mut self, texture: Rc<RefCell<Texture<'_>>>, data: &DrawData) {
+        let tex = texture.borrow();
+        let query = tex.query();
 
         let source = match &data.source {
             Some(r) => Some(to_rect(r)),
@@ -137,7 +164,7 @@ impl<'a> SDLApp<'a> {
 
         if let Err(e) = self
             .canvas
-            .copy_ex(&texture, source, dest, angle, origin, horizontal, vertical)
+            .copy_ex(&tex, source, dest, angle, origin, horizontal, vertical)
         {
             warn!("SDL2 Texture Rendering failed: {}", e);
         }
@@ -211,6 +238,9 @@ impl<'a> App for SDLApp<'a> {
                         match command {
                             UpdateAction::PlayMusic(ticket, loops, volume) => {
                                 self.play_music(*ticket, *loops, *volume)
+                            }
+                            UpdateAction::PlaySound(ticket, volume) => {
+                                self.play_sound(*ticket, *volume)
                             }
                             _ => {}
                         }

@@ -44,6 +44,7 @@ impl<'a> TicketManager<StorageType, StorageType, String, str> for SDLStorage<'a>
         match storage_key {
             StorageType::Texture => self.textures.take_ticket(resource_key),
             StorageType::Music => self.music.take_ticket(resource_key),
+            StorageType::Sound => self.sounds.take_ticket(resource_key),
             _ => Err(ResourceError::UnknownStorage(storage_key.to_string())),
         }
     }
