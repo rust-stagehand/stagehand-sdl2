@@ -6,26 +6,29 @@ use sdl2::{
 
 use stagehand::{
     app::gameloop,
-    example::ExampleScene,
+    example::{ui::UIScene, ExampleScene},
     input::{ActionState, ActionType, InputMap},
     scene::Scene,
-    utility2d::Initialize,
+    utility::Initialize,
 };
 
 use stagehand_sdl2::{
     input::SDLCommand,
-    loading::{SDLStorage, TextureLoader},
+    loading::{FontLoader, SDLStorage, TextureLoader},
     SDLApp,
 };
 
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     sdl_context.audio()?;
+
     sdl2::image::init(sdl2::image::InitFlag::PNG)?;
+
     sdl2::mixer::open_audio(44100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1024)?;
     sdl2::mixer::init(InitFlag::MP3)?;
-
     sdl2::mixer::allocate_channels(4);
+
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
 
     let video_subsystem = sdl_context.video()?;
     let window = video_subsystem
@@ -37,6 +40,38 @@ fn main() -> Result<(), String> {
 
     let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
     let texture_creator = canvas.texture_creator();
+
+    let texture_loader = TextureLoader::from_creator(texture_creator);
+    let font_loader = FontLoader::from_context(ttf_context);
+
+    let mut storage = SDLStorage::new(&texture_loader, &font_loader);
+    storage
+        .textures
+        .load("Logo.png".to_string(), "example-assets/Logo.png")
+        .unwrap();
+
+    storage
+        .music
+        .load("Music.wav".to_string(), "example-assets/Music.wav")
+        .unwrap();
+
+    storage
+        .sounds
+        .load("OoB.wav".to_string(), "example-assets/OoB.wav")
+        .unwrap();
+
+    storage
+        .fonts
+        .load(
+            "Napalm.ttf".to_string(),
+            &("example-assets/OperationNapalm.ttf", 32),
+        )
+        .unwrap();
+
+    storage.textures.lock();
+    storage.music.lock();
+    storage.sounds.lock();
+    storage.fonts.lock();
 
     let mut input = InputMap::<SDLCommand>::new();
     let player = input.add_user();
@@ -81,35 +116,25 @@ fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    let texture_loader = TextureLoader::from_creator(texture_creator);
-    let mut storage = SDLStorage::new(&texture_loader);
-    storage
-        .textures
-        .load("Logo.png".to_string(), "example-assets/Logo.png")
-        .unwrap();
-
-    storage
-        .music
-        .load("Music.wav".to_string(), "example-assets/Music.wav")
-        .unwrap();
-
-    storage
-        .sounds
-        .load("OoB.wav".to_string(), "example-assets/OoB.wav")
-        .unwrap();
-
-    storage.textures.lock();
-    storage.music.lock();
-    storage.sounds.lock();
-
     let mut initialize = Initialize::<SDLCommand, SDLStorage, ()>::new(input, storage, ());
 
     let mut scene = ExampleScene::new();
     scene.initialize(&mut initialize);
 
-    let mut app = SDLApp::new(sdl_context, canvas, initialize.input, initialize.storage)?;
+    let mut ui = UIScene::new();
+    ui.initialize(&mut initialize);
 
-    app.add_scene(Box::new(scene));
+    let mut app = SDLApp::<(), (), String>::new(
+        sdl_context,
+        canvas,
+        initialize.input,
+        initialize.storage,
+        &texture_loader.creator,
+        (),
+    )?;
+
+    app.add_scene("Example".to_string(), Box::new(scene), true);
+    app.add_scene("UI".to_string(), Box::new(ui), true);
 
     gameloop(&mut app, 60)?;
 

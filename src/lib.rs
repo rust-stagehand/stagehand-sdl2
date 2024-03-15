@@ -1,35 +1,37 @@
 use log::{error, warn};
 use sdl2::{
-    event::Event,
     pixels::Color,
     rect::{Point, Rect},
-    render::{Canvas, Texture},
-    video::Window,
+    render::{Canvas, Texture, TextureCreator},
+    video::{Window, WindowContext},
     Sdl, TimerSubsystem,
 };
 use std::{cell::RefCell, rc::Rc};
 
 use stagehand::{
-    app::App,
-    draw::{Draw, DrawBatch, DrawData, DrawDestination, DrawRect},
-    input::{ActionState, ActionType, InputError, InputMap},
+    draw::{Draw, DrawBatch, DrawColor, DrawData, DrawDestination, DrawRect},
+    input::InputMap,
     loading::{ResourceError, Ticket},
     scene::Scene,
-    utility2d::{Initialize, Update, UpdateAction, UpdateInfo},
-    Stage, StageError,
+    utility::{Initialize, Update, UpdateInstruction},
+    Stage,
 };
 
 use {input::SDLCommand, loading::SDLStorage};
 
+mod app;
+
 pub mod input;
 pub mod loading;
 
-pub struct SDLApp<'a> {
+pub struct SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
     stage: Stage<
         'a,
-        Initialize<SDLCommand, SDLStorage<'a>, ()>,
-        Update<SDLCommand, ()>,
-        Vec<UpdateAction>,
+        String,
+        Initialize<SDLCommand, SDLStorage<'a, 'b, 'c>, IContent>,
+        Update<SDLCommand, UContent>,
+        Message,
+        UpdateInstruction,
         (),
         DrawBatch<Draw, ()>,
     >,
@@ -37,19 +39,22 @@ pub struct SDLApp<'a> {
     sdl: Sdl,
     canvas: Canvas<Window>,
 
-    update: Update<SDLCommand, ()>,
+    update: Update<SDLCommand, UContent>,
 
-    storage: SDLStorage<'a>,
+    storage: SDLStorage<'a, 'b, 'c>,
+    texture_creator: &'a TextureCreator<WindowContext>,
 
     timer: TimerSubsystem,
 }
 
-impl<'a> SDLApp<'a> {
+impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
     pub fn new(
         sdl: Sdl,
         canvas: Canvas<Window>,
         input: InputMap<SDLCommand>,
-        storage: SDLStorage<'a>,
+        storage: SDLStorage<'a, 'b, 'c>,
+        creator: &'a TextureCreator<WindowContext>,
+        content: UContent,
     ) -> Result<Self, String> {
         let timer = sdl.timer()?;
 
@@ -62,10 +67,11 @@ impl<'a> SDLApp<'a> {
             update: Update {
                 input,
                 info: Vec::new(),
-                content: (),
+                content,
             },
 
             storage,
+            texture_creator: creator,
 
             timer,
         })
@@ -73,17 +79,21 @@ impl<'a> SDLApp<'a> {
 
     pub fn add_scene(
         &mut self,
+        key: String,
         scene: Box<
             dyn Scene<
-                    Initialize = Initialize<SDLCommand, SDLStorage<'a>, ()>,
-                    Update = Update<SDLCommand, ()>,
+                    Key = String,
+                    Initialize = Initialize<SDLCommand, SDLStorage<'a, 'b, 'c>, IContent>,
+                    Update = Update<SDLCommand, UContent>,
+                    Message = Message,
+                    Instruction = UpdateInstruction,
                     Draw = (),
-                    UpdateBatch = Vec<UpdateAction>,
                     DrawBatch = DrawBatch<Draw, ()>,
                 > + 'a,
         >,
+        active: bool,
     ) {
-        self.stage.push_scene(scene);
+        self.stage.add_scene(key, scene, active);
     }
 
     fn volume(v: f32) -> i32 {
@@ -93,7 +103,7 @@ impl<'a> SDLApp<'a> {
     fn play_music(&mut self, ticket: Ticket, loops: i32, volume: f32) {
         match self.storage.music.get_by_ticket(ticket) {
             Ok(m) => {
-                sdl2::mixer::Music::set_volume(SDLApp::volume(volume));
+                sdl2::mixer::Music::set_volume(Self::volume(volume));
                 match m.borrow().play(loops) {
                     Ok(()) => {}
                     Err(e) => error!("Error playing music: {}", e),
@@ -108,7 +118,7 @@ impl<'a> SDLApp<'a> {
             Ok(s) => {
                 match s.try_borrow_mut() {
                     Ok(mut s_v) => {
-                        s_v.set_volume(SDLApp::volume(volume));
+                        s_v.set_volume(Self::volume(volume));
                     }
                     Err(e) => warn!(
                         "Cannot set volume on a sound effect already borrowed elsewhere: {}",
@@ -172,139 +182,16 @@ impl<'a> SDLApp<'a> {
     }
 }
 
-impl<'a> App for SDLApp<'a> {
-    type EventError = String;
-
-    fn ticks(&self) -> u64 {
-        self.timer.ticks64()
-    }
-
-    fn processed_events(&mut self) -> Result<bool, String> {
-        let mut events = self.sdl.event_pump()?;
-
-        for event in events.poll_iter() {
-            match event {
-                Event::Quit { .. } => {
-                    return Ok(false);
-                }
-                _ => {}
-            }
-        }
-
-        let keys = events.keyboard_state();
-        let mouse = events.mouse_state();
-
-        for command_options in self.update.input.commands.iter() {
-            let mut active = ActionType::Digital(ActionState::Up);
-            'commands: for command in command_options.commands.iter() {
-                match command {
-                    SDLCommand::Key(c) => 'key: {
-                        for key in c.iter() {
-                            if !keys.is_scancode_pressed(*key) {
-                                break 'key;
-                            }
-                        }
-                        active = ActionType::Digital(ActionState::Down);
-                        break 'commands;
-                    }
-                    SDLCommand::MouseButton(b) => 'button: {
-                        for button in b.iter() {
-                            if !mouse.is_mouse_button_pressed(*button) {
-                                break 'button;
-                            }
-                        }
-                        active = ActionType::Digital(ActionState::Down);
-                        break 'commands;
-                    }
-                    SDLCommand::MousePosition => {
-                        active = ActionType::Analog {
-                            x: mouse.x() as f32,
-                            y: mouse.y() as f32,
-                        };
-                    }
-                    _ => {}
-                };
-            }
-
-            match self.update.input.users[command_options.user_index]
-                .update_action(command_options.action_index, active)
-            {
-                Err(e) => match e {
-                    InputError::ActionIndexOutOfBounds => {
-                        error!("Action index not found: {}", command_options.action_index)
-                    }
-                    _ => {}
-                },
-                _ => {}
-            };
-        }
-
-        Ok(true)
-    }
-
-    fn update(&mut self, delta: f64) {
-        self.update.info.clear();
-
-        if !sdl2::mixer::Music::is_playing() {
-            self.update.info.push(UpdateInfo::MusicStopped);
-        }
-
-        match self.stage.update(&self.update, delta) {
-            Ok(v) => {
-                for batch in v.iter() {
-                    for command in batch.iter() {
-                        match command {
-                            UpdateAction::PlayMusic(ticket, loops, volume) => {
-                                self.play_music(*ticket, *loops, *volume)
-                            }
-                            UpdateAction::PlaySound(ticket, volume) => {
-                                self.play_sound(*ticket, *volume)
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => match e {
-                StageError::NoScenesToUpdateError => warn!("Stage has no scenes to update."),
-                _ => {}
-            },
-        }
-    }
-
-    fn draw(&mut self, interp: f64, _total_time: u64) {
-        self.canvas.set_draw_color(Color::RGB(55, 55, 55));
-        self.canvas.clear();
-
-        let batches = match self.stage.draw(&(), interp) {
-            Ok(b) => b,
-            Err(e) => {
-                match e {
-                    StageError::NoScenesToDrawError => warn!("Stage has no scenes to draw."),
-                    _ => {}
-                }
-
-                return;
-            }
-        };
-
-        for batch in batches.iter() {
-            for draw in batch.instructions.iter() {
-                let texture = match self.storage.textures.get_by_ticket(draw.ticket) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        ResourceError::log_failure(e);
-                        return;
-                    }
-                };
-
-                self.render_texture(texture, &draw.data);
-            }
-        }
-
-        self.canvas.present();
-    }
-}
-
 fn to_rect(r: &DrawRect) -> Rect {
     Rect::new(r.x as i32, r.y as i32, r.width as u32, r.height as u32)
+}
+
+fn to_color(c: &DrawColor) -> Color {
+    let max = u8::MAX as f32;
+    Color::RGBA(
+        (max * c.r) as u8,
+        (max * c.g) as u8,
+        (max * c.b) as u8,
+        (max * c.a) as u8,
+    )
 }
