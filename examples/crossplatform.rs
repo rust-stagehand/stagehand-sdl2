@@ -111,7 +111,10 @@ fn main() -> Result<(), String> {
         .add_action(
             player,
             "Pause".to_string(),
-            vec![],
+            vec![
+                SDLCommand::Key(vec![Scancode::Escape]),
+                SDLCommand::MouseButton(vec![MouseButton::Middle]),
+            ],
             ActionType::Digital(ActionState::Up),
         )
         .unwrap();

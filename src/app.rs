@@ -83,6 +83,8 @@ impl<'a, 'b, 'c, IContent, UContent, Message> App
             };
         }
 
+        self.update.input.set();
+
         Ok(true)
     }
 
@@ -111,6 +113,8 @@ impl<'a, 'b, 'c, IContent, UContent, Message> App
                 _ => {}
             },
         }
+
+        self.update.input.updated();
     }
 
     fn draw(&mut self, interp: f64, _total_time: u64) {
