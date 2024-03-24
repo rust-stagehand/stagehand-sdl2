@@ -1,5 +1,6 @@
 use log::{error, warn};
 use sdl2::{
+    controller::GameController,
     pixels::Color,
     rect::{Point, Rect},
     render::{Canvas, Texture, TextureCreator},
@@ -38,6 +39,7 @@ pub struct SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
 
     sdl: Sdl,
     canvas: Canvas<Window>,
+    controllers: Vec<GameController>,
 
     update: Update<SDLCommand, UContent>,
 
@@ -51,6 +53,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
     pub fn new(
         sdl: Sdl,
         canvas: Canvas<Window>,
+        controllers: Vec<GameController>,
         input: InputMap<SDLCommand>,
         storage: SDLStorage<'a, 'b, 'c>,
         creator: &'a TextureCreator<WindowContext>,
@@ -63,6 +66,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
 
             sdl,
             canvas,
+            controllers,
 
             update: Update {
                 input,

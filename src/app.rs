@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, f32::EPSILON, rc::Rc};
 
 use log::{error, warn};
 use sdl2::{event::Event, pixels::Color};
@@ -12,7 +12,10 @@ use stagehand::{
     StageError,
 };
 
-use crate::{input::SDLCommand, SDLApp};
+use crate::{
+    input::{translate_axis, SDLCommand, SDLGamepadFeature},
+    SDLApp,
+};
 
 impl<'a, 'b, 'c, IContent, UContent, Message> App
     for SDLApp<'a, 'b, 'c, IContent, UContent, Message>
@@ -31,7 +34,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> App
                 Event::Quit { .. } => {
                     return Ok(false);
                 }
-                _ => {}
+                _ => (),
             }
         }
 
@@ -40,6 +43,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> App
 
         for command_options in self.update.input.commands.iter() {
             let mut active = ActionType::Digital(ActionState::Up);
+
             'commands: for command in command_options.commands.iter() {
                 match command {
                     SDLCommand::Key(c) => 'key: {
@@ -66,7 +70,72 @@ impl<'a, 'b, 'c, IContent, UContent, Message> App
                             y: mouse.y() as f32,
                         };
                     }
-                    _ => {}
+                    SDLCommand::Gamepad(feature, controller) => match controller {
+                        Some(index) => {
+                            let controller = &self.controllers[*index];
+
+                            match feature {
+                                SDLGamepadFeature::Button(buttons) => {
+                                    for button in buttons.iter() {
+                                        if !controller.button(*button) {
+                                            continue;
+                                        }
+                                    }
+                                    active = ActionType::Digital(ActionState::Down);
+                                    break 'commands;
+                                }
+                                SDLGamepadFeature::Axis(axis) => {
+                                    let value = translate_axis(controller.axis(*axis));
+                                    if value.abs() >= EPSILON {
+                                        active = ActionType::Axis(value);
+                                        break 'commands;
+                                    }
+                                }
+                                SDLGamepadFeature::Stick(x, y) => {
+                                    let (x, y) = (
+                                        translate_axis(controller.axis(*x)),
+                                        translate_axis(controller.axis(*y)),
+                                    );
+                                    if x.abs() >= EPSILON || y.abs() >= EPSILON {
+                                        active = ActionType::Analog { x, y };
+                                        break 'commands;
+                                    }
+                                }
+                            };
+                        }
+                        None => {
+                            'controller: for controller in self.controllers.iter() {
+                                match feature {
+                                    SDLGamepadFeature::Button(buttons) => {
+                                        for button in buttons.iter() {
+                                            if !controller.button(*button) {
+                                                continue 'controller;
+                                            }
+                                        }
+                                        active = ActionType::Digital(ActionState::Down);
+                                        break 'commands;
+                                    }
+                                    SDLGamepadFeature::Axis(axis) => {
+                                        let value = translate_axis(controller.axis(*axis));
+                                        if value.abs() >= 0.1 {
+                                            active = ActionType::Axis(value);
+                                            break 'commands;
+                                        }
+                                    }
+                                    SDLGamepadFeature::Stick(x, y) => {
+                                        let (a_x, a_y) = (
+                                            translate_axis(controller.axis(*x)),
+                                            translate_axis(controller.axis(*y)),
+                                        );
+                                        if a_x.abs() >= 0.1 || a_y.abs() >= 0.1 {
+                                            active = ActionType::Analog { x: a_x, y: a_y };
+                                            break 'commands;
+                                        }
+                                    }
+                                };
+                            }
+                        }
+                    },
                 };
             }
 
