@@ -1,8 +1,8 @@
-use log::warn;
+use std::{cell::RefCell, rc::Rc};
+
 use sdl2::{
     controller::{Axis, Button},
     keyboard::Scancode,
-    mixer::{InitFlag, AUDIO_S16LSB, DEFAULT_CHANNELS},
     mouse::MouseButton,
 };
 
@@ -15,56 +15,14 @@ use stagehand::{
 };
 
 use stagehand_sdl2::{
+    initialize_sdl2,
     input::{SDLCommand, SDLGamepadFeature},
-    loading::{FontLoader, SDLStorage, TextureLoader},
+    loading::SDLStorage,
     SDLApp,
 };
 
 fn main() -> Result<(), String> {
-    let sdl_context = sdl2::init()?;
-    sdl_context.audio()?;
-
-    sdl2::image::init(sdl2::image::InitFlag::PNG)?;
-
-    sdl2::mixer::open_audio(44100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1024)?;
-    sdl2::mixer::init(InitFlag::MP3)?;
-    sdl2::mixer::allocate_channels(4);
-
-    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
-
-    let video_subsystem = sdl_context.video()?;
-
-    let window = video_subsystem
-        .window("Stagehand SDL2 Example", 800, 600)
-        .position_centered()
-        .opengl()
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    let texture_creator = canvas.texture_creator();
-
-    let controller_system = sdl_context.game_controller()?;
-    let num_joysticks = controller_system.num_joysticks()?;
-
-    let mut controllers = Vec::new();
-    for index in 0..num_joysticks {
-        if !controller_system.is_game_controller(index) {
-            continue;
-        }
-
-        match controller_system.open(index) {
-            Ok(c) => {
-                controllers.push(c);
-            }
-            Err(e) => {
-                warn!("Problem opening controller: {}", e);
-            }
-        };
-    }
-
-    let texture_loader = TextureLoader::from_creator(texture_creator);
-    let font_loader = FontLoader::from_context(ttf_context);
+    let (context, canvas, texture_loader, font_loader) = initialize_sdl2()?;
 
     let mut storage = SDLStorage::new(&texture_loader, &font_loader);
     storage
@@ -89,11 +47,7 @@ fn main() -> Result<(), String> {
             &("example-assets/OperationNapalm.ttf", 32),
         )
         .unwrap();
-
-    storage.textures.lock();
-    storage.music.lock();
-    storage.sounds.lock();
-    storage.fonts.lock();
+    storage.lock();
 
     let mut input = InputMap::<SDLCommand>::new();
     let player = input.add_user();
@@ -147,24 +101,26 @@ fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    let mut initialize = Initialize::<SDLCommand, SDLStorage, ()>::new(input, storage, ());
+    let mut initialize = Initialize::<SDLCommand, SDLStorage, ()>::new(
+        Rc::new(RefCell::new(input)),
+        Rc::new(RefCell::new(storage)),
+        Rc::new(RefCell::new(())),
+    );
 
     let mut scene = ExampleScene::new();
     scene.initialize(&mut initialize);
-
     let mut ui = UIScene::new();
     ui.initialize(&mut initialize);
 
-    let mut app = SDLApp::<(), (), String>::new(
-        sdl_context,
+    let mut app = SDLApp::from_loader(
+        context,
         canvas,
-        controllers,
+        &texture_loader,
         initialize.input,
         initialize.storage,
-        &texture_loader.creator,
-        (),
+        Rc::new(RefCell::new(())),
+        Rc::new(RefCell::new(())),
     )?;
-
     app.add_scene("Example".to_string(), Box::new(scene), true);
     app.add_scene("UI".to_string(), Box::new(ui), true);
 

@@ -37,6 +37,13 @@ impl<'a, 'b, 'c> SDLStorage<'a, 'b, 'c> {
             music: MusicStorage::new(&EmptyLoader {}),
         }
     }
+
+    pub fn lock(&mut self) {
+        self.fonts.lock();
+        self.textures.lock();
+        self.sounds.lock();
+        self.music.lock();
+    }
 }
 
 impl<'a, 'b, 'c> TicketManager<StorageType, StorageType, String, str> for SDLStorage<'a, 'b, 'c> {

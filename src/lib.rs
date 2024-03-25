@@ -1,6 +1,8 @@
+use loading::{FontLoader, TextureLoader};
 use log::{error, warn};
 use sdl2::{
     controller::GameController,
+    mixer::{InitFlag, AUDIO_S16LSB, DEFAULT_CHANNELS},
     pixels::Color,
     rect::{Point, Rect},
     render::{Canvas, Texture, TextureCreator},
@@ -14,7 +16,7 @@ use stagehand::{
     input::InputMap,
     loading::{ResourceError, Ticket},
     scene::Scene,
-    utility::{Initialize, Update, UpdateInstruction},
+    utility::{Initialize, Update, UpdateInfo, UpdateInstruction},
     Stage,
 };
 
@@ -24,6 +26,43 @@ mod app;
 
 pub mod input;
 pub mod loading;
+
+pub fn initialize_sdl2<'a, 'c>() -> Result<
+    (
+        Sdl,
+        Canvas<Window>,
+        TextureLoader<'a, WindowContext>,
+        FontLoader<'a, 'c>,
+    ),
+    String,
+> {
+    let sdl_context = sdl2::init()?;
+    sdl_context.audio()?;
+
+    sdl2::image::init(sdl2::image::InitFlag::PNG)?;
+
+    sdl2::mixer::open_audio(44100, AUDIO_S16LSB, DEFAULT_CHANNELS, 1024)?;
+    sdl2::mixer::init(InitFlag::MP3)?;
+    sdl2::mixer::allocate_channels(4);
+
+    let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
+
+    let video_subsystem = sdl_context.video()?;
+    let window = video_subsystem
+        .window("Stagehand SDL2 Example", 800, 600)
+        .position_centered()
+        .opengl()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    let texture_creator = canvas.texture_creator();
+
+    let texture_loader = TextureLoader::from_creator(texture_creator);
+    let font_loader = FontLoader::from_context(ttf_context);
+
+    Ok((sdl_context, canvas, texture_loader, font_loader))
+}
 
 pub struct SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
     stage: Stage<
@@ -41,23 +80,67 @@ pub struct SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
     canvas: Canvas<Window>,
     controllers: Vec<GameController>,
 
-    update: Update<SDLCommand, UContent>,
+    i_content: Rc<RefCell<IContent>>,
+    u_content: Rc<RefCell<UContent>>,
+    input: Rc<RefCell<InputMap<SDLCommand>>>,
+    info: Rc<RefCell<Vec<UpdateInfo>>>,
 
-    storage: SDLStorage<'a, 'b, 'c>,
+    storage: Rc<RefCell<SDLStorage<'a, 'b, 'c>>>,
     texture_creator: &'a TextureCreator<WindowContext>,
 
     timer: TimerSubsystem,
 }
 
 impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UContent, Message> {
+    pub fn from_loader(
+        context: Sdl,
+        canvas: Canvas<Window>,
+        texture: &'a TextureLoader<'a, WindowContext>,
+        input: Rc<RefCell<InputMap<SDLCommand>>>,
+        storage: Rc<RefCell<SDLStorage<'a, 'b, 'c>>>,
+        i_content: Rc<RefCell<IContent>>,
+        u_content: Rc<RefCell<UContent>>,
+    ) -> Result<Self, String> {
+        let controller_system = context.game_controller()?;
+        let num_joysticks = controller_system.num_joysticks()?;
+
+        let mut controllers = Vec::new();
+        for index in 0..num_joysticks {
+            if !controller_system.is_game_controller(index) {
+                continue;
+            }
+
+            match controller_system.open(index) {
+                Ok(c) => {
+                    controllers.push(c);
+                }
+                Err(e) => {
+                    warn!("Problem opening controller: {}", e);
+                }
+            };
+        }
+
+        Self::new(
+            context,
+            canvas,
+            controllers,
+            input,
+            storage,
+            &texture.creator,
+            i_content,
+            u_content,
+        )
+    }
+
     pub fn new(
         sdl: Sdl,
         canvas: Canvas<Window>,
         controllers: Vec<GameController>,
-        input: InputMap<SDLCommand>,
-        storage: SDLStorage<'a, 'b, 'c>,
+        input: Rc<RefCell<InputMap<SDLCommand>>>,
+        storage: Rc<RefCell<SDLStorage<'a, 'b, 'c>>>,
         creator: &'a TextureCreator<WindowContext>,
-        content: UContent,
+        i_content: Rc<RefCell<IContent>>,
+        u_content: Rc<RefCell<UContent>>,
     ) -> Result<Self, String> {
         let timer = sdl.timer()?;
 
@@ -68,17 +151,25 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
             canvas,
             controllers,
 
-            update: Update {
-                input,
-                info: Vec::new(),
-                content,
-            },
+            i_content: i_content,
+            u_content: u_content,
+            input: input,
+            info: Rc::new(RefCell::new(Vec::new())),
 
             storage,
             texture_creator: creator,
 
             timer,
         })
+    }
+
+    pub fn prepare_info(&mut self) {
+        let mut info = self.info.borrow_mut();
+        info.clear();
+
+        if !sdl2::mixer::Music::is_playing() {
+            info.push(UpdateInfo::MusicStopped);
+        }
     }
 
     pub fn add_scene(
@@ -105,7 +196,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
     }
 
     fn play_music(&mut self, ticket: Ticket, loops: i32, volume: f32) {
-        match self.storage.music.get_by_ticket(ticket) {
+        match self.storage.borrow().music.get_by_ticket(ticket) {
             Ok(m) => {
                 sdl2::mixer::Music::set_volume(Self::volume(volume));
                 match m.borrow().play(loops) {
@@ -118,7 +209,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
     }
 
     fn play_sound(&mut self, ticket: Ticket, volume: f32) {
-        match self.storage.sounds.get_by_ticket(ticket) {
+        match self.storage.borrow().sounds.get_by_ticket(ticket) {
             Ok(s) => {
                 match s.try_borrow_mut() {
                     Ok(mut s_v) => {
