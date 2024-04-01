@@ -8,7 +8,7 @@ use stagehand::{
     draw::DrawType,
     input::{ActionState, ActionType, InputError},
     loading::ResourceError,
-    utility::{Update, UpdateInfo, UpdateInstruction},
+    utility::{Update, UpdateInstruction},
     StageError,
 };
 

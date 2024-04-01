@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use sdl2::{
     controller::{Axis, Button},
     keyboard::Scancode,
@@ -10,8 +8,6 @@ use stagehand::{
     app::gameloop,
     example::{ui::UIScene, ExampleScene},
     input::{ActionState, ActionType, InputMap},
-    scene::Scene,
-    utility::Initialize,
 };
 
 use stagehand_sdl2::{
@@ -101,28 +97,13 @@ fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    let mut initialize = Initialize::<SDLCommand, SDLStorage, ()>::new(
-        Rc::new(RefCell::new(input)),
-        Rc::new(RefCell::new(storage)),
-        Rc::new(RefCell::new(())),
-    );
+    let mut app = SDLApp::from_loader(context, canvas, &texture_loader, input, storage, (), ())?;
 
-    let mut scene = ExampleScene::new();
-    scene.initialize(&mut initialize);
-    let mut ui = UIScene::new();
-    ui.initialize(&mut initialize);
+    let scene = ExampleScene::new();
+    let ui = UIScene::new();
 
-    let mut app = SDLApp::from_loader(
-        context,
-        canvas,
-        &texture_loader,
-        initialize.input,
-        initialize.storage,
-        Rc::new(RefCell::new(())),
-        Rc::new(RefCell::new(())),
-    )?;
-    app.add_scene("Example".to_string(), Box::new(scene), true);
-    app.add_scene("UI".to_string(), Box::new(ui), true);
+    app.add_scene("Example".to_string(), Box::new(scene), true, true);
+    app.add_scene("UI".to_string(), Box::new(ui), true, true);
 
     gameloop(&mut app, 60)?;
 

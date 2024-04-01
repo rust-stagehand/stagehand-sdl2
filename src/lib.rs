@@ -96,10 +96,10 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
         context: Sdl,
         canvas: Canvas<Window>,
         texture: &'a TextureLoader<'a, WindowContext>,
-        input: Rc<RefCell<InputMap<SDLCommand>>>,
-        storage: Rc<RefCell<SDLStorage<'a, 'b, 'c>>>,
-        i_content: Rc<RefCell<IContent>>,
-        u_content: Rc<RefCell<UContent>>,
+        input: InputMap<SDLCommand>,
+        storage: SDLStorage<'a, 'b, 'c>,
+        i_content: IContent,
+        u_content: UContent,
     ) -> Result<Self, String> {
         let controller_system = context.game_controller()?;
         let num_joysticks = controller_system.num_joysticks()?;
@@ -136,11 +136,11 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
         sdl: Sdl,
         canvas: Canvas<Window>,
         controllers: Vec<GameController>,
-        input: Rc<RefCell<InputMap<SDLCommand>>>,
-        storage: Rc<RefCell<SDLStorage<'a, 'b, 'c>>>,
+        input: InputMap<SDLCommand>,
+        storage: SDLStorage<'a, 'b, 'c>,
         creator: &'a TextureCreator<WindowContext>,
-        i_content: Rc<RefCell<IContent>>,
-        u_content: Rc<RefCell<UContent>>,
+        i_content: IContent,
+        u_content: UContent,
     ) -> Result<Self, String> {
         let timer = sdl.timer()?;
 
@@ -151,12 +151,12 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
             canvas,
             controllers,
 
-            i_content: i_content,
-            u_content: u_content,
-            input: input,
+            i_content: Rc::new(RefCell::new(i_content)),
+            u_content: Rc::new(RefCell::new(u_content)),
+            input: Rc::new(RefCell::new(input)),
             info: Rc::new(RefCell::new(Vec::new())),
 
-            storage,
+            storage: Rc::new(RefCell::new(storage)),
             texture_creator: creator,
 
             timer,
@@ -175,7 +175,7 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
     pub fn add_scene(
         &mut self,
         key: String,
-        scene: Box<
+        mut scene: Box<
             dyn Scene<
                     Key = String,
                     Initialize = Initialize<SDLCommand, SDLStorage<'a, 'b, 'c>, IContent>,
@@ -187,7 +187,17 @@ impl<'a, 'b, 'c, IContent, UContent, Message> SDLApp<'a, 'b, 'c, IContent, UCont
                 > + 'a,
         >,
         active: bool,
+        initialize: bool,
     ) {
+        if initialize {
+            let mut init = Initialize::new(
+                self.input.clone(),
+                self.storage.clone(),
+                self.i_content.clone(),
+            );
+            scene.initialize(&mut init);
+        }
+
         self.stage.add_scene(key, scene, active);
     }
 
